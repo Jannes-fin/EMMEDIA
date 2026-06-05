@@ -92,6 +92,15 @@ X_RESERVED_PATHS = {
     "messages", "settings", "login", "logout", "signup", "compose"
 }
 X_HANDLE_RE = re.compile(r"^[A-Za-z0-9_]{1,15}$")
+X_COMMUNITY_TERMS = [
+    "community", "group", "server", "cook group", "resell", "tickets",
+    "ticket", "sneakers", "sneaker", "proxies", "proxy", "bot",
+    "automation", "monitor", "checkout"
+]
+X_PERSONAL_TERMS = [
+    "personal account", "my thoughts", "opinions are my own", "father",
+    "mother", "husband", "wife", "student", "photographer"
+]
 
 
 def extract_x_handle(text_or_url):
@@ -117,6 +126,57 @@ def extract_x_handle(text_or_url):
             return handle
 
     return ""
+
+
+def score_x_candidate(item, handle):
+    score = 0
+    reasons = []
+    if not handle or handle in X_RESERVED_PATHS or not X_HANDLE_RE.fullmatch(handle):
+        return -10, ["invalid_or_reserved_handle"]
+
+    keyword = str(item.get("keyword", ""))
+    title = str(item.get("title") or item.get("source_title") or "")
+    description = str(item.get("description", ""))
+    profile_url = str(item.get("profile_url", ""))
+    source_url = str(item.get("url") or item.get("source_url") or "")
+    text = " ".join([keyword, title, description, profile_url, source_url]).lower()
+    evidence_text = " ".join([title, description, profile_url, source_url]).lower()
+
+    if item.get("has_discord_link") or "discord.gg/" in text:
+        score += 5
+        reasons.append("discord_link")
+    if "whop.com/" in text:
+        score += 4
+        reasons.append("whop_link")
+    if "t.me/" in text or "telegram" in text:
+        score += 3
+        reasons.append("telegram_signal")
+
+    keyword_terms = []
+    for term in re.findall(r"[A-Za-z0-9]+", keyword.lower()):
+        if len(term) >= 4 and re.search(rf"\b{re.escape(term)}\b", evidence_text):
+            keyword_terms.append(term)
+    if keyword_terms:
+        score += min(4, len(set(keyword_terms)))
+        reasons.append("keyword_match")
+
+    community_hits = [
+        term for term in X_COMMUNITY_TERMS
+        if re.search(rf"\b{re.escape(term)}\b", evidence_text)
+    ]
+    if community_hits:
+        score += min(5, len(community_hits))
+        reasons.append("community_terms")
+
+    personal_hits = [term for term in X_PERSONAL_TERMS if term in text]
+    if personal_hits:
+        score -= 2
+        reasons.append("personal_account_signal")
+        if not community_hits:
+            score -= 3
+            reasons.append("no_community_signal")
+
+    return score, reasons
 
 
 def safe_get(url, timeout=10):
@@ -962,6 +1022,7 @@ def build_x_candidate(item, date_str=None):
     discovered_via = item.get("discovered_via") or item.get("source") or "raw_result"
     if keyword and ":" not in discovered_via:
         discovered_via = f"{discovered_via}:{keyword}"
+    candidate_score, candidate_reasons = score_x_candidate(item, handle)
 
     return {
         "x_handle": handle,
@@ -972,6 +1033,8 @@ def build_x_candidate(item, date_str=None):
         "source_title": item.get("title", ""),
         "keyword": keyword,
         "status": "candidate",
+        "candidate_score": candidate_score,
+        "candidate_reasons": candidate_reasons,
         "first_seen": date_str,
         "last_seen": date_str
     }
