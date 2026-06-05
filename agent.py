@@ -731,6 +731,16 @@ def run_research(keywords, session_size=40):
         all_raw.extend(search_telegram(kw))
         time.sleep(1.5)
 
+    # X/Twitter discovery is a sidecar: collect candidate accounts, then keep
+    # them out of the lead pipeline below.
+    x_keywords = session_keywords[:min(10, len(session_keywords))]
+    for kw in x_keywords:
+        try:
+            all_raw.extend(search_twitter(kw)[:8])
+        except Exception as e:
+            log.error(f"Twitter discovery failed for '{kw}': {e}")
+        time.sleep(1)
+
     save_x_candidates(all_raw)
 
     # Only filter out non-Whop/Telegram URLs — do NOT require Discord or free trial in snippet
