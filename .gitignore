@@ -1,0 +1,15 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Logs & runtime data
+logs/
+*.log
+
+# Runtime state (regenerated each session)
+learnings.json
