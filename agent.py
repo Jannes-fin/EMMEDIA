@@ -87,6 +87,38 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 }
 
+X_RESERVED_PATHS = {
+    "home", "search", "explore", "i", "intent", "share", "notifications",
+    "messages", "settings", "login", "logout", "signup", "compose"
+}
+X_HANDLE_RE = re.compile(r"^[A-Za-z0-9_]{1,15}$")
+
+
+def extract_x_handle(text_or_url):
+    """Return the first valid X/Twitter handle found in text or URL."""
+    if not text_or_url:
+        return ""
+
+    text = str(text_or_url)
+    url_matches = re.finditer(
+        r"https?://(?:www\.)?(?:x|twitter)\.com/([^/?#\s]+)",
+        text,
+        flags=re.IGNORECASE
+    )
+    for match in url_matches:
+        handle = match.group(1).strip("@").lower()
+        if handle not in X_RESERVED_PATHS and X_HANDLE_RE.fullmatch(handle):
+            return handle
+
+    mention_matches = re.finditer(r"(?<![\w.])@([A-Za-z0-9_]{1,15})(?![A-Za-z0-9_-])", text)
+    for match in mention_matches:
+        handle = match.group(1).lower()
+        if handle not in X_RESERVED_PATHS and X_HANDLE_RE.fullmatch(handle):
+            return handle
+
+    return ""
+
+
 def safe_get(url, timeout=10):
     try:
         r = requests.get(url, headers=HEADERS, timeout=timeout)
@@ -280,6 +312,9 @@ def search_twitter(keyword):
                     continue
                 seen.add(href)
                 body = r.get("body", "")
+                handle = extract_x_handle(href) or extract_x_handle(body) or extract_x_handle(r.get("title", ""))
+                if not handle:
+                    continue
                 has_discord = "discord.gg" in body or "discord.gg" in href
                 results.append({
                     "source": "twitter",
@@ -287,6 +322,9 @@ def search_twitter(keyword):
                     "url": href,
                     "description": body[:200],
                     "has_discord_link": has_discord,
+                    "x_handle": handle,
+                    "profile_url": f"https://x.com/{handle}",
+                    "discovered_via": f"twitter_search:{keyword}",
                     "keyword": keyword
                 })
                 if len(results) >= 8:
@@ -693,6 +731,8 @@ def run_research(keywords, session_size=40):
         all_raw.extend(search_telegram(kw))
         time.sleep(1.5)
 
+    save_x_candidates(all_raw)
+
     # Only filter out non-Whop/Telegram URLs — do NOT require Discord or free trial in snippet
     # (those signals are discovered via page scraping, not DDG snippets)
     all_raw = [
@@ -897,6 +937,73 @@ def mark_leads_sent(leads):
             existing.add(key)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(sorted(existing), f, indent=2, ensure_ascii=False)
+
+
+def build_x_candidate(item, date_str=None):
+    if date_str is None:
+        date_str = datetime.now().strftime("%Y-%m-%d")
+
+    text = " ".join(str(item.get(k, "")) for k in ("url", "contact", "description", "title"))
+    handle = item.get("x_handle") or extract_x_handle(text)
+    if not handle:
+        return None
+
+    keyword = item.get("keyword", "")
+    discovered_via = item.get("discovered_via") or item.get("source") or "raw_result"
+    if keyword and ":" not in discovered_via:
+        discovered_via = f"{discovered_via}:{keyword}"
+
+    return {
+        "x_handle": handle,
+        "profile_url": item.get("profile_url") or f"https://x.com/{handle}",
+        "discovered_via": discovered_via,
+        "source": item.get("source", ""),
+        "source_url": item.get("url", ""),
+        "source_title": item.get("title", ""),
+        "keyword": keyword,
+        "status": "candidate",
+        "first_seen": date_str,
+        "last_seen": date_str
+    }
+
+
+def save_x_candidates(raw_results, date_str=None):
+    if date_str is None:
+        date_str = datetime.now().strftime("%Y-%m-%d")
+    path = f"logs/x_candidates_{date_str}.json"
+
+    existing = []
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+        except Exception:
+            existing = []
+
+    by_handle = {
+        c.get("x_handle", "").lower(): c
+        for c in existing
+        if c.get("x_handle")
+    }
+
+    added = 0
+    for item in raw_results:
+        candidate = build_x_candidate(item, date_str=date_str)
+        if not candidate:
+            continue
+        key = candidate["x_handle"].lower()
+        if key in by_handle:
+            by_handle[key]["last_seen"] = date_str
+            continue
+        by_handle[key] = candidate
+        added += 1
+
+    if added:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(sorted(by_handle.values(), key=lambda c: c["x_handle"]), f, indent=2, ensure_ascii=False)
+        log.info(f"Saved {added} new X candidates (total today: {len(by_handle)}) -> {path}")
+    return list(by_handle.values())
+
 
 def save_results(new_results, date_str=None):
     if date_str is None:
