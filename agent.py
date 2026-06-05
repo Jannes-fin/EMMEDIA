@@ -1078,6 +1078,47 @@ def save_x_candidates(raw_results, date_str=None):
     return list(by_handle.values())
 
 
+def print_x_candidates(date_str=None, limit=25):
+    if date_str is None:
+        date_str = datetime.now().strftime("%Y-%m-%d")
+    path = f"logs/x_candidates_{date_str}.json"
+    if not os.path.exists(path):
+        print(f"No X candidates file found for {date_str}: {path}")
+        return
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            candidates = json.load(f)
+    except Exception as e:
+        print(f"Failed to read X candidates for {date_str}: {e}")
+        return
+
+    if not candidates:
+        print(f"No X candidates stored for {date_str}.")
+        return
+
+    candidates = sorted(
+        candidates,
+        key=lambda c: c.get("candidate_score", 0),
+        reverse=True
+    )
+    print(f"Top X candidates for {date_str} ({min(limit, len(candidates))}/{len(candidates)} shown)")
+    for idx, c in enumerate(candidates[:limit], start=1):
+        reasons = c.get("candidate_reasons", [])
+        if isinstance(reasons, list):
+            reasons_text = ", ".join(str(r) for r in reasons)
+        else:
+            reasons_text = str(reasons)
+        keyword = c.get("source_keyword") or c.get("keyword") or ""
+        print(
+            f"{idx}. @{c.get('x_handle', '')} | "
+            f"{c.get('profile_url', '')} | "
+            f"score={c.get('candidate_score', 0)} | "
+            f"reasons=[{reasons_text}] | "
+            f"keyword={keyword}"
+        )
+
+
 def save_results(new_results, date_str=None):
     if date_str is None:
         date_str = datetime.now().strftime("%Y-%m-%d")
@@ -1291,9 +1332,13 @@ if __name__ == "__main__":
     parser.add_argument("--now", action="store_true", help="Run morning session immediately (send embed + research)")
     parser.add_argument("--research-only", action="store_true", help="Run research session only, no embed")
     parser.add_argument("--test", action="store_true", help="Run research session then immediately send embed with today's results")
+    parser.add_argument("--x-candidates", action="store_true", help="Show stored X candidates for a local date, no sends")
+    parser.add_argument("--x-candidates-date", help="Date for --x-candidates in YYYY-MM-DD format")
     args = parser.parse_args()
 
-    if args.now:
+    if args.x_candidates:
+        print_x_candidates(args.x_candidates_date)
+    elif args.now:
         log.info("Manual run triggered.")
         run_morning_session()
     elif args.research_only:
